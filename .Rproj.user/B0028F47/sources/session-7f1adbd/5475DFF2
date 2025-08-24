@@ -1,12 +1,12 @@
 {
-    "id": "304381BF",
+    "id": "5475DFF2",
     "path": "C:/Users/leet/OneDrive - usb.ch/USB/PhD/courses/ISCB46_RPackages/my_R_package/SundayMorning/_pkgdown.yml",
     "project_path": "_pkgdown.yml",
     "type": "yaml",
     "hash": "0",
     "contents": "",
     "dirty": false,
-    "created": 1756044235677.0,
+    "created": 1756045539987.0,
     "source_on_save": false,
     "relative_order": 3,
     "properties": {
@@ -16,11 +16,11 @@
         "scrollLine": "0"
     },
     "folds": "",
-    "lastKnownWriteTime": 1756045304,
+    "lastKnownWriteTime": 1756045599,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1756045304,
+    "last_content_update": 1756045599,
     "read_only": false,
     "read_only_alternatives": []
 }
