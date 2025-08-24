@@ -1,0 +1,6 @@
+# Build unit test
+
+
+test_that("calc values works", {
+  expect_equal(calculate_values(3),10)
+})

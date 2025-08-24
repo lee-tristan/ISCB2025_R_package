@@ -1,0 +1,278 @@
+
+
+# Load packages -----------------------------------------------------------
+library(data.table)
+library(speedglm)
+library(tidyverse)
+
+# Load data ---------------------------------------------------------------
+data <- readRDS(paste(procdata_dir,"02-time_varying_data.rds",sep ="/"))
+
+setDT(data)
+
+# Subset data for profiling/testing ---------------------------------------
+# Read command line arguments
+args <- commandArgs(trailingOnly = TRUE)
+
+
+args <- list("yes", 2000) # REMOVE AFTERWARDS #
+
+
+# Check if the correct number of arguments is provided
+if (length(args) < 1) {
+  stop("At least one argument is required: subset (yes/no).")
+}
+
+# Parse arguments
+subset <- args[1]  # First argument: whether to subset (yes/no)
+
+# Check if subsetting is requested
+if (subset == "yes") {
+  # Check if N is provided
+  if (length(args) < 2) {
+    stop("N (number of samples) is required when subset = 'yes'.")
+  }
+  
+  N <- as.numeric(args[2])  # Second argument: number of samples to subset
+  
+  # Validate N
+  if (is.na(N) || N <= 0) {
+    stop("N must be a positive integer.")
+  }
+  
+  cat("Subsetting data to", N, "unique individuals...\n")
+  
+  # Set seed for reproducibility
+  set.seed(1234)
+  
+  # Sample N distinct patients
+  sample_ids <- data %>%
+    distinct(id) %>%
+    slice_sample(n = N, replace = FALSE) %>%
+    pull()
+  
+  # Subset the data based on sampled patient IDs
+  sample_df <- data[data$id %in% sample_ids, ]
+} else if (subset == "no") {
+  # If no subsetting is requested, use the entire dataset
+  cat("Using the entire dataset...\n")
+  sample_df <- data
+  N <- length(unique(sample_df$id))
+} else {
+  stop("Invalid value for subset argument. Use 'yes' or 'no'.")
+}
+
+# rm(data)
+# gc()
+
+# Define the functions needed for the analysis ----------------------------
+
+#' Generate sequential trial dataset
+#'
+#' @param data Output from get_switch_wt
+#'
+#' @return A sequential trial dataset with columns patient, period, fu, treat, wt, event
+
+expand_data <- function(data) {
+
+  covariates <- c("sex", "ethnicity", "riskgroup", "age", "years_on_art",
+                  "bmi_c", "cd4_c", "cd4_nadir_c", "aht_yn", "chol_c",
+                  "hdl_c", "dia_yn", "ckd_c", "smoke_yn", "TAF", "ABC", 
+                  "edu_simple","aids_history_yn","cv_pos_family","pla_drug_yn","lip_drug_yn") # Removed respond cohort but otherwise did not change any vars (eg. pla_drug_yn, lip_drug_yn, )
+
+  # Ensure all covariates exist in the data
+  missing_covariates <- setdiff(covariates, names(data))
+  if (length(missing_covariates) > 0) {
+    stop("The following covariates are missing in the data: ", paste(missing_covariates, collapse = ", "))
+  }
+
+  # Maximum period for each patient
+  data[, maxt := max(visit), by = id] 
+  
+  # Subset dataset to eligible periods for each patient, fix the treatment arm
+  elig <- data[elig == 1][, trial := visit][, arm := as.factor(inti)]
+
+  # Generate the sequential trial dataset
+  mytrial <- elig[, .(visit = trial:maxt, fu = trial:maxt - trial + 1), by = .(id, trial)]
+  
+  # Restrict follow up of each trial to max follow up length
+  mytrial <- mytrial[fu <= 72,]
+
+  # Add information on treatment arm and covariates to the sequential dataset
+  mytrial[elig,
+          on = .(id, trial),
+          `:=`(arm = i.arm,
+               sex = i.sex,
+               ethnicity = i.ethnicity,
+               riskgroup = i.riskgroup,
+               # respond_cohort10 = i.respond_cohort10,
+               age = i.age,
+               years_on_art = i.years_on_art,
+               bmi_c = i.bmi_c,
+               cd4_c = i.cd4_c,
+               cd4_nadir_c = i.cd4_nadir_c,
+               aht_yn = i.aht_yn,
+               chol_c = i.chol_c,
+               hdl_c = i.hdl_c,
+               dia_yn = i.dia_yn,
+               ckd_c = i.ckd_c,
+               smoke_yn = i.smoke_yn,
+               TAF = i.TAF,
+               ABC = i.ABC,
+               edu_simple = i.edu_simple,
+               aids_history_yn = i.aids_history_yn, 
+               cv_pos_family = i.cv_pos_family, 
+               pla_drug_yn = i.pla_drug_yn,
+               lip_drug_yn = i.lip_drug_yn)]
+
+  # Add information on event status to the sequential dataset
+  mytrial[data[, .(id, visit, cvd_yn)],
+          on = .(id, visit),
+          event := i.cvd_yn][]
+
+
+
+  # Clean up memory (optional)
+  rm(data, elig)
+  gc()
+
+  return(mytrial)
+}
+
+
+#' Get Risk estimates of expanded dataset
+#'
+#' @param data Expanded trial dataset
+#' @param model Outcome model
+#'
+#' @return A dataset with the mean risk of event for each follow-up time
+#' @export
+#'
+#' @examples
+#' 
+
+# data <- exp_data
+get_risk_estimates <- function(data, model) {
+
+  # Expand dataset for trials
+  cat("Step 1: Expand dataset...\n")
+  m <- data[fu == 1, ][, .(fu = 1:72), by = .(id, trial)]
+  m <- m[data[fu == 1, ], on = .(id, trial), allow.cartesian = TRUE]
+  m[, i.fu := NULL]
+  rm(data)
+  gc()
+
+  # Predict the probability of event for each arm # hazard
+  cat("Step 2: Calculate predictions...\n")
+  m[, arm := as.factor(1)]
+  m[, p1:= predict(model, newdata = m, type = "response")]
+  m[, arm := as.factor(0)]
+  m[, p0 := predict(model, newdata = m, type = "response")]
+
+  # Calculate the risk of event for each arm
+  cat("Step 3: Calculate risk...\n")
+  risk <- m[, .(id, trial, fu, p1, p0)][, `:=`(s1 = cumprod(1-p1),
+                                                    s0 = cumprod(1-p0)),
+                                             by = .(id, trial)]
+
+  rm(m)
+  gc()
+
+  risk[, `:=` (r1 = 1-s1,
+               r0 = 1-s0)]
+
+  # Calculate the mean risk for each follow-up time
+  risk1 <- risk[, .(mean_r1 = mean(r1), 
+                   mean_r0 = mean(r0)), by = .(fu)][]
+
+  cat("Risk estimation completed.\n")
+  return(risk)
+}
+
+
+
+# Generating sequential trial dataset -------------------------------------
+
+cat("Generating sequential trial dataset...\n")
+exp_data <- expand_data(data)
+
+cat("Sequential trial dataset generated with", N, "unique individuals.\n")
+
+# # Generate new ID which combines info on patient and trial # It is this code that subsets the dataset and results in id 10004 starting at trial#3
+# exp_data[, id_trial := paste(id, trial, sep = "_")]
+# 
+# # Remove a proportion of patient_trial combinations from the arm == 0 group
+# p <- 0.25
+# 
+# cat("Removing", round(p * 100), "% of patient/trial combinations from the arm == 0 group...\n")
+# 
+# set.seed(1234)
+# patient_trials_out <- exp_data |>
+#   filter(arm == 0) |>
+#   distinct(id_trial) |>
+#   slice_sample(prop = p) |>
+#   pull()
+# 
+# # only keep patient_trials which are not in patient_trials_out
+# exp_data <- exp_data[!id_trial %in% patient_trials_out,][]
+# 
+# # Remove period as it could cause problems (integer)
+# exp_data[, visit := NULL]
+
+cat("The final dataset contains", format(dim(exp_data)[1], big.mark = "'"), "rows and"
+   , dim(exp_data)[2], "columns.\n")
+
+
+
+# Fit the outcome model -------------------------------------------------
+
+cat("Fitting the outcome model...\n")
+
+time1 <- Sys.time()
+# tic()
+# # Fit the model
+fit.pool <- speedglm::speedglm(event == 1 ~ arm*poly(fu, 2) + poly(trial,2) +
+                            sex + ethnicity + riskgroup + age + 
+                            bmi_c + aht_yn + chol_c +
+                            hdl_c + dia_yn + ckd_c + smoke_yn + TAF + ABC +
+                            edu_simple + aids_history_yn + cv_pos_family + pla_drug_yn + lip_drug_yn,
+                          family = binomial(link = "logit"),
+                          data = exp_data) # PROBLEM - + cd4_c + cd4_nadir_c colinearity - no missing and event = 1... impute?? regroup cd4? For now, just removed...
+saveRDS(fit.pool, paste(procdata_dir,"itt_event_model.rds.rds", sep ="/"))
+
+# table(exp_data$event, exp_data$cd4_c)
+time2 <- Sys.time()
+print(time2-time1)
+elapsed_time <- (time2-time1)
+
+# elapsed_time <- toc(quiet = TRUE)
+# elapsed_time_minutes <- round((elapsed_time$toc - elapsed_time$tic) / 60, 1)
+cat("Outcome model fitted successfully in ", elapsed_time, ".\n",
+    sep = "")
+
+
+
+# Get risk estimates ------------------------------------------------------
+
+cat("Calculating risk estimates...\n")
+risk_estimates <- get_risk_estimates(exp_data, fit.pool)
+cat("Risk estimates calculated successfully.\n")
+
+
+# Write out the data ------------------------------------------------------
+
+cat("Write data...\n")
+write_rds(risk_estimates, paste(procdata_dir,"e12-itt_risk_estimates.rds", sep ="/"))
+cat("Script completed.")
+
+
+# # Check
+# plot(risk$fu,risk$mean_r0)
+# lines(risk$fu,risk$mean_r1)
+# 
+# test <- risk_estimates %>% group_by(trial,fu) %>% summarise(mean_r1 = mean(r1), mean_r0 = mean(r0), rr = mean_r1/mean_r0)  #%>% ungroup(.) %>% filter(fu == 12| fu == 24| fu == 72)
+# 
+# plot(test$fu[test$trial==1],test$rr[test$trial==1])
+# lines(test$fu[test$trial==72],test$rr[test$trial==72])
+# 
+# risk_estimates %>% group_by(trial,fu) %>% summarise(mean_r1 = mean(r1), mean_r0 = mean(r0), rr = mean_r1/mean_r0) %>% ungroup(.) %>% filter(fu == 12| fu == 24| fu == 72) %>% filter(trial == 1 | trial == 24 | trial == 72 | trial == 160) %>% arrange(fu,trial)

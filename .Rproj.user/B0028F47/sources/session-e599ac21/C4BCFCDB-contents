@@ -1,0 +1,22 @@
+Package: SundayMorning
+Type: Package
+Title: Building My First R Package ISCB2025
+Version: 0.1.0
+Authors@R: c(
+    person(
+      "Tristan", "Lee",
+      email = "tristantaylor.lee@usb.ch",
+      role = c("cre")
+    )
+  )
+Description: This package is for expanding a dataset for a sequential trial.
+    It takes data provided in the a person-month dataframe, with time varying
+    variables. It expands it so that each person-month starts a new trial.
+License: What license is it under?
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
