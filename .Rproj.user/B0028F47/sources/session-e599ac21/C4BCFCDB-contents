@@ -9,10 +9,8 @@ Authors@R: c(
       role = c("cre")
     )
   )
-Description: This package is for expanding a dataset for a sequential trial.
-    It takes data provided in the a person-month dataframe, with time varying
-    variables. It expands it so that each person-month starts a new trial.
-License: What license is it under?
+Description: This package is a dummy test package written during ISCB46.
+License: Under no license
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
