@@ -1,8 +1,0 @@
-usethis::use_testthat()
-
-then go into testthat folder and create R files "test-foo.R" and then create the file 
-eg. testthah ... in the r script
-
-test_that("liberty works", {
-  expect_equal(liberty(1),2)
-})
